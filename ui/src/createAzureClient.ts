@@ -3,15 +3,15 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { ServiceClient } from '@azure/core-http';
 import { Environment } from '@azure/ms-rest-azure-env';
-import { ServiceClient, ServiceClientCredentials } from '@azure/ms-rest-js';
 import * as vscode from "vscode";
 import * as types from '../index';
 import { appendExtensionUserAgent } from "./extensionUserAgent";
 
 export function createAzureClient<T>(
-    clientInfo: { credentials: ServiceClientCredentials; subscriptionId: string; environment: Environment; },
-    clientType: new (credentials: ServiceClientCredentials, subscriptionId: string, options?: types.IMinimumServiceClientOptions) => T): T {
+    clientInfo: { credentials: types.AzExtServiceClientCredentials; subscriptionId: string; environment: Environment; },
+    clientType: new (credentials: types.AzExtServiceClientCredentials, subscriptionId: string, options?: types.IMinimumServiceClientOptions) => T): T {
     return new clientType(clientInfo.credentials, clientInfo.subscriptionId, {
         acceptLanguage: vscode.env.language,
         baseUri: clientInfo.environment.resourceManagerEndpointUrl,
@@ -20,8 +20,8 @@ export function createAzureClient<T>(
 }
 
 export function createAzureSubscriptionClient<T>(
-    clientInfo: { credentials: ServiceClientCredentials; environment: Environment; },
-    clientType: new (credentials: ServiceClientCredentials, options?: types.IMinimumServiceClientOptions) => T): T {
+    clientInfo: { credentials: types.AzExtServiceClientCredentials; environment: Environment; },
+    clientType: new (credentials: types.AzExtServiceClientCredentials, options?: types.IMinimumServiceClientOptions) => T): T {
     return new clientType(clientInfo.credentials, {
         acceptLanguage: vscode.env.language,
         baseUri: clientInfo.environment.resourceManagerEndpointUrl,
@@ -29,8 +29,8 @@ export function createAzureSubscriptionClient<T>(
     });
 }
 
-export async function createGenericClient(clientInfo?: ServiceClientCredentials | { credentials: ServiceClientCredentials; environment: Environment; }): Promise<ServiceClient> {
-    let credentials: ServiceClientCredentials | undefined;
+export async function createGenericClient(clientInfo?: types.AzExtServiceClientCredentials | { credentials: types.AzExtServiceClientCredentials; environment: Environment; }): Promise<ServiceClient> {
+    let credentials: types.AzExtServiceClientCredentials | undefined;
     let baseUri: string | undefined;
     if (clientInfo && 'credentials' in clientInfo) {
         credentials = clientInfo.credentials;

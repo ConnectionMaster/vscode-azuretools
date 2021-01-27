@@ -3,12 +3,13 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { HttpOperationResponse, RequestPrepareOptions, ServiceClient, ServiceClientCredentials, WebResourceLike } from '@azure/ms-rest-js';
+// NOTE: Using '@azure/core-http' instead of '@azure/ms-rest-js' for `ServiceClient` because of https://github.com/Azure/ms-rest-js/issues/412
+import { HttpOperationResponse, RequestPrepareOptions, ServiceClient, WebResourceLike } from '@azure/core-http';
 import * as vscode from 'vscode';
 import * as types from '../index';
 
 export class GenericServiceClient extends ServiceClient {
-    constructor(credentials: ServiceClientCredentials | undefined, options: types.IMinimumServiceClientOptions) {
+    constructor(credentials: types.AzExtServiceClientCredentials | undefined, options: types.IMinimumServiceClientOptions) {
         super(credentials, options);
         this.baseUri = options.baseUri?.endsWith('/') ? options.baseUri.slice(0, -1) : options.baseUri;
     }
