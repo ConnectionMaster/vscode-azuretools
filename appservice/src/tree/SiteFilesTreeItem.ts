@@ -4,17 +4,18 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { AzExtParentTreeItem } from 'vscode-azureextensionui';
-import { ISimplifiedSiteClient } from '../ISimplifiedSiteClient';
 import { localize } from '../localize';
+import { SiteClient } from '../SiteClient';
 import { FolderTreeItem } from './FolderTreeItem';
 
 export class SiteFilesTreeItem extends FolderTreeItem {
     public static contextValue: string = 'siteFiles';
     public readonly contextValue: string = SiteFilesTreeItem.contextValue;
+    public suppressMaskLabel: boolean = true;
 
     protected readonly _isRoot: boolean = true;
 
-    constructor(parent: AzExtParentTreeItem, client: ISimplifiedSiteClient, isReadOnly: boolean) {
+    constructor(parent: AzExtParentTreeItem, client: SiteClient, isReadOnly: boolean) {
         super(parent, client, localize('siteFiles', 'Files'), '/site/wwwroot', isReadOnly);
     }
 }

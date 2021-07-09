@@ -21,6 +21,8 @@ export abstract class AzExtTreeItem implements types.AzExtTreeItem {
     public commandArgs?: unknown[];
     public iconPath?: types.TreeItemIconPath;
     public tooltip?: string;
+    public suppressMaskLabel?: boolean;
+    public hasBeenDeleted?: boolean;
     //#endregion
 
     /**
@@ -30,6 +32,7 @@ export abstract class AzExtTreeItem implements types.AzExtTreeItem {
     public readonly collapsibleState: TreeItemCollapsibleState | undefined;
     public readonly parent: IAzExtParentTreeItemInternal | undefined;
     public isLoadingMore: boolean;
+    public readonly valuesToMask: string[] = [];
     private _temporaryDescription?: string;
     private _treeDataProvider: IAzExtTreeDataProviderInternal | undefined;
 
@@ -64,7 +67,6 @@ export abstract class AzExtTreeItem implements types.AzExtTreeItem {
     }
 
     public get treeDataProvider(): IAzExtTreeDataProviderInternal {
-        // tslint:disable-next-line: strict-boolean-expressions
         return this._treeDataProvider || nonNullProp(this, 'parent').treeDataProvider;
     }
 
@@ -110,6 +112,7 @@ export abstract class AzExtTreeItem implements types.AzExtTreeItem {
                 if (this.parent) {
                     this.parent.removeChildFromCache(this);
                 }
+                this.hasBeenDeleted = true;
             } else {
                 throw new NotImplementedError('deleteTreeItemImpl', this);
             }

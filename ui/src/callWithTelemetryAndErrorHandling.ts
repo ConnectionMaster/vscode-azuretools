@@ -8,15 +8,16 @@ import * as types from '../index';
 import { DialogResponses } from './DialogResponses';
 import { ext } from './extensionVariables';
 import { localize } from './localize';
-import { maskValues } from './masking';
+import { getRedactedLabel, maskUserInfo } from './masking';
 import { parseError } from './parseError';
 import { cacheIssueForCommand } from './registerReportIssueCommand';
 import { IReportableIssue, reportAnIssue } from './reportAnIssue';
+import { AzExtUserInput } from './userInput/AzExtUserInput';
 import { limitLines } from './utils/textStrings';
 
 const maxStackLines: number = 3;
 
-function initContext(): [number, types.IActionContext] {
+function initContext(callbackId: string): [number, types.IActionContext] {
     const start: number = Date.now();
     const context: types.IActionContext = {
         telemetry: {
@@ -39,14 +40,25 @@ function initContext(): [number, types.IActionContext] {
             rethrow: false,
             issueProperties: {}
         },
-        ui: ext.ui,
+        ui: <AzExtUserInput><unknown>undefined,
         valuesToMask: []
     };
+    context.ui = new AzExtUserInput(context);
+
+    const handlerContext: types.IHandlerContext = Object.assign(context, { callbackId });
+    for (const handler of Object.values(onActionStartHandlers)) {
+        try {
+            handler(handlerContext);
+        } catch {
+            // don't block other handlers
+        }
+    }
+
     return [start, context];
 }
 
 export function callWithTelemetryAndErrorHandlingSync<T>(callbackId: string, callback: (context: types.IActionContext) => T): T | undefined {
-    const [start, context] = initContext();
+    const [start, context] = initContext(callbackId);
 
     try {
         return callback(context);
@@ -59,7 +71,7 @@ export function callWithTelemetryAndErrorHandlingSync<T>(callbackId: string, cal
 }
 
 export async function callWithTelemetryAndErrorHandling<T>(callbackId: string, callback: (context: types.IActionContext) => T | PromiseLike<T>): Promise<T | undefined> {
-    const [start, context] = initContext();
+    const [start, context] = initContext(callbackId);
 
     try {
         return await Promise.resolve(callback(context));
@@ -71,8 +83,13 @@ export async function callWithTelemetryAndErrorHandling<T>(callbackId: string, c
     }
 }
 
+const onActionStartHandlers: { [id: number]: types.OnActionStartHandler } = {};
 const errorHandlers: { [id: number]: types.ErrorHandler } = {};
 const telemetryHandlers: { [id: number]: types.TelemetryHandler } = {};
+
+export function registerOnActionStartHandler(handler: types.OnActionStartHandler): Disposable {
+    return registerHandler(handler, onActionStartHandlers);
+}
 
 export function registerErrorHandler(handler: types.ErrorHandler): Disposable {
     return registerHandler(handler, errorHandlers);
@@ -106,7 +123,7 @@ function handleError(context: types.IActionContext, callbackId: string, error: u
 
     const errorData: types.IParsedError = parseError(errorContext.error);
     const unMaskedMessage: string = errorData.message;
-    errorData.message = maskValues(errorData.message, context.valuesToMask);
+    errorData.message = maskUserInfo(errorData.message, context.valuesToMask);
     if (errorData.isUserCancelledError) {
         context.telemetry.properties.result = 'Canceled';
         context.errorHandling.suppressDisplay = true;
@@ -154,7 +171,7 @@ function handleError(context: types.IActionContext, callbackId: string, error: u
         }
 
         // don't wait
-        window.showErrorMessage(message, ...items).then(async (result: MessageItem | types.AzExtErrorButton | undefined) => {
+        void window.showErrorMessage(message, ...items).then(async (result: MessageItem | types.AzExtErrorButton | undefined) => {
             if (result === DialogResponses.reportAnIssue) {
                 await reportAnIssue(issue);
             } else if (result && 'callback' in result) {
@@ -181,8 +198,19 @@ function handleTelemetry(context: types.IActionContext, callbackId: string, star
     if (!context.telemetry.suppressAll && !(context.telemetry.suppressIfSuccessful && context.telemetry.properties.result === 'Succeeded')) {
         const end: number = Date.now();
         context.telemetry.measurements.duration = (end - start) / 1000;
+        // de-dupe
+        context.valuesToMask = context.valuesToMask.filter((v, index) => context.valuesToMask.indexOf(v) === index);
+        for (const [key, value] of Object.entries(context.telemetry.properties)) {
+            if (value) {
+                if (/(error|exception)/i.test(key)) {
+                    context.telemetry.properties[key] = context.telemetry.maskEntireErrorMessage ? getRedactedLabel('action') : maskUserInfo(value, context.valuesToMask);
+                } else {
+                    context.telemetry.properties[key] = maskUserInfo(value, context.valuesToMask, true /* lessAggressive */);
+                }
+            }
+        }
 
-        const errorProps: string[] = Object.keys(context.telemetry.properties).filter(key => /(error|stack|exception)/i.test(key));
+        const errorProps: string[] = Object.keys(context.telemetry.properties).filter(key => /(error|exception|stack)/i.test(key));
         // Note: The id of the extension is automatically prepended to the given callbackId (e.g. "vscode-cosmosdb/")
         ext._internalReporter.sendTelemetryErrorEvent(handlerContext.callbackId, context.telemetry.properties, context.telemetry.measurements, errorProps);
     }

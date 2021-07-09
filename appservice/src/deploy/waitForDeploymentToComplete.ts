@@ -6,15 +6,16 @@
 import { CancellationToken, window } from 'vscode';
 import { IActionContext, IParsedError, parseError } from 'vscode-azureextensionui';
 import { KuduClient, KuduModels } from 'vscode-azurekudu';
+import { createKuduClient } from '../createKuduClient';
 import { ext } from '../extensionVariables';
-import { ISimplifiedSiteClient } from '../ISimplifiedSiteClient';
 import { localize } from '../localize';
+import { SiteClient } from '../SiteClient';
 import { delay } from '../utils/delay';
 import { ignore404Error, retryKuduCall } from '../utils/kuduUtils';
 import { nonNullProp } from '../utils/nonNull';
 import { IDeployContext } from './IDeployContext';
 
-export async function waitForDeploymentToComplete(context: IActionContext & Partial<IDeployContext>, client: ISimplifiedSiteClient, expectedId?: string, token?: CancellationToken, pollingInterval: number = 5000): Promise<void> {
+export async function waitForDeploymentToComplete(context: IActionContext & Partial<IDeployContext>, client: SiteClient, expectedId?: string, token?: CancellationToken, pollingInterval: number = 5000): Promise<void> {
     let fullLog: string = '';
 
     let lastLogTime: Date = new Date(0);
@@ -24,7 +25,7 @@ export async function waitForDeploymentToComplete(context: IActionContext & Part
     let permanentId: string | undefined;
     // a 60 second timeout period to let Kudu initialize the deployment
     const maxTimeToWaitForExpectedId: number = Date.now() + 60 * 1000;
-    const kuduClient: KuduClient = await client.getKuduClient();
+    const kuduClient = await createKuduClient(context, client);
 
     while (!token?.isCancellationRequested) {
         [deployment, permanentId, initialStartTime] = await tryGetLatestDeployment(context, kuduClient, permanentId, initialStartTime, expectedId);
@@ -46,7 +47,7 @@ export async function waitForDeploymentToComplete(context: IActionContext & Part
         });
 
         let lastLogTimeForThisPoll: Date | undefined;
-        // tslint:disable-next-line: no-constant-condition
+        // eslint-disable-next-line no-constant-condition
         while (true) {
             const newEntry: KuduModels.LogEntry | undefined = logEntries.pop();
             if (!newEntry) {
@@ -81,7 +82,7 @@ export async function waitForDeploymentToComplete(context: IActionContext & Part
                 const message: string = localize('deploymentFailed', 'Deployment to "{0}" failed.', client.fullName);
                 const viewOutput: string = localize('viewOutput', 'View Output');
                 // don't wait
-                window.showErrorMessage(message, viewOutput).then(result => {
+                void window.showErrorMessage(message, viewOutput).then(result => {
                     if (result === viewOutput) {
                         ext.outputChannel.show();
                     }
@@ -94,7 +95,7 @@ export async function waitForDeploymentToComplete(context: IActionContext & Part
                 context.telemetry.properties.deployErrorLastLine = lastErrorLine;
                 throw new Error(messageWithoutName);
             } else {
-                context.syncTriggersPostDeploy = client.isFunctionApp && !/syncing/i.test(fullLog);
+                context.syncTriggersPostDeploy = client.isFunctionApp && !/syncing/i.test(fullLog) && !client.isKubernetesApp && !client.isWorkflowApp;
                 return;
             }
         } else {
@@ -109,7 +110,7 @@ async function tryGetLatestDeployment(context: IActionContext, kuduClient: KuduC
     if (permanentId) {
         // Use "permanentId" to find the deployment during its "permanent" phase
         deployment = await retryKuduCall(context, 'getResult', async () => {
-            // tslint:disable-next-line: no-non-null-assertion
+            // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
             return await kuduClient.deployment.getResult(permanentId!);
         });
     } else if (expectedId) {
@@ -138,7 +139,7 @@ async function tryGetLatestDeployment(context: IActionContext, kuduClient: KuduC
             return await kuduClient.deployment.getDeployResults();
         });
         deployment = deployments
-            // tslint:disable-next-line:no-non-null-assertion
+            // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
             .filter(deployResult => deployResult.startTime && deployResult.startTime >= initialStartTime!)
             .sort((a, b) => nonNullProp(b, 'startTime').valueOf() - nonNullProp(a, 'startTime').valueOf())
             .shift();

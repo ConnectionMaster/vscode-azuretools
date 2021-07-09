@@ -88,4 +88,21 @@ export interface IAppServiceWizardContext extends IResourceGroupWizardContext, I
      * This will be defined after `AppInsightsNameStep.prompt` occurs.
      */
     newAppInsightsName?: string;
+
+    /**
+     * Indicates advanced creation should be used
+     */
+    advancedCreation?: boolean;
+
+    customLocation?: CustomLocation;
+}
+
+export type CustomLocation = {
+    name: string;
+    id: string;
+    kubeEnvironment: {
+        name: string;
+        id: string;
+        location: string;
+    }
 }

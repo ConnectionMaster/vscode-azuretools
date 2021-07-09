@@ -12,33 +12,39 @@ import { AppKind, WebsiteOS } from './AppKind';
 import { IAppServiceWizardContext } from './IAppServiceWizardContext';
 import { setLocationsTask } from './setLocationsTask';
 
+type ExtendedSkuDescription = WebSiteManagementModels.SkuDescription & { label?: string; description?: string; group?: string }
+
 export class AppServicePlanSkuStep extends AzureWizardPromptStep<IAppServiceWizardContext> {
-    public async prompt(wizardContext: IAppServiceWizardContext): Promise<void> {
-        let skus: WebSiteManagementModels.SkuDescription[] = this.getCommonSkus();
-        if (wizardContext.newSiteKind === AppKind.functionapp) {
+    public async prompt(context: IAppServiceWizardContext): Promise<void> {
+        let skus: ExtendedSkuDescription[] = context.advancedCreation ? this.getRecommendedSkus().concat(this.getAdvancedSkus()) : this.getRecommendedSkus();
+        if (context.newSiteKind === AppKind.functionapp) {
             skus.push(...this.getElasticPremiumSkus());
+        } else if (context.newSiteKind?.includes(AppKind.workflowapp)) {
+            skus = this.getWorkflowStandardSkus();
         }
 
-        const regExp: RegExp | undefined = wizardContext.planSkuFamilyFilter;
+        const regExp: RegExp | undefined = context.planSkuFamilyFilter;
         if (regExp) {
             skus = skus.filter(s => !s.family || regExp.test(s.family));
         }
 
         const pricingTiers: IAzureQuickPickItem<WebSiteManagementModels.SkuDescription | undefined>[] = skus.map(s => {
             return {
-                label: nonNullProp(s, 'name'),
-                description: s.tier,
-                data: s
+                label: s.label || nonNullProp(s, 'name'),
+                description: s.description || s.tier,
+                data: s,
+                group: s.group || localize('additionalOptionsLabel', 'Additional Options')
             };
         });
 
         pricingTiers.push({ label: localize('ShowPricingCalculator', '$(link-external) Show pricing information...'), data: undefined, suppressPersistence: true });
 
-        while (!wizardContext.newPlanSku) {
-            wizardContext.newPlanSku = (await wizardContext.ui.showQuickPick(pricingTiers, { placeHolder: localize('PricingTierPlaceholder', 'Select a pricing tier for the new App Service plan.') })).data;
+        while (!context.newPlanSku) {
+            const placeHolder = localize('pricingTierPlaceholder', 'Select a pricing tier');
+            context.newPlanSku = (await context.ui.showQuickPick(pricingTiers, { placeHolder, suppressPersistence: true, enableGrouping: context.advancedCreation })).data;
 
-            if (!wizardContext.newPlanSku) {
-                if (wizardContext.newSiteOS === WebsiteOS.linux) {
+            if (!context.newPlanSku) {
+                if (context.newSiteOS === WebsiteOS.linux) {
                     await openUrl('https://aka.ms/AA60znj');
                 } else {
                     await openUrl('https://aka.ms/AA6202c');
@@ -46,29 +52,51 @@ export class AppServicePlanSkuStep extends AzureWizardPromptStep<IAppServiceWiza
             }
         }
 
-        await setLocationsTask(wizardContext);
+        await setLocationsTask(context);
     }
 
-    public shouldPrompt(wizardContext: IAppServiceWizardContext): boolean {
-        return !wizardContext.newPlanSku;
+    public shouldPrompt(context: IAppServiceWizardContext): boolean {
+        return !context.newPlanSku;
     }
 
-    private getCommonSkus(): WebSiteManagementModels.SkuDescription[] {
+    private getRecommendedSkus(): ExtendedSkuDescription[] {
+        const recommendedGroup: string = localize('recommendedGroup', 'Recommended');
         return [
             {
                 name: 'F1',
                 tier: 'Free',
                 size: 'F1',
                 family: 'F',
-                capacity: 1
+                capacity: 1,
+                label: localize('freeLabel', 'Free (F1)'),
+                description: localize('freeDescription', 'Try out Azure at no cost'),
+                group: recommendedGroup
             },
             {
                 name: 'B1',
                 tier: 'Basic',
                 size: 'B1',
                 family: 'B',
-                capacity: 1
+                capacity: 1,
+                label: localize('basicLabel', 'Basic (B1)'),
+                description: localize('basicDescription', 'Develop and test'),
+                group: recommendedGroup
             },
+            {
+                name: 'P1v2',
+                tier: 'Premium V2',
+                size: 'P1v2',
+                family: 'Pv2',
+                capacity: 1,
+                label: localize('premiumLabel', 'Premium (P1v2)'),
+                description: localize('premiumDescription', 'Use in production'),
+                group: recommendedGroup
+            }
+        ];
+    }
+
+    private getAdvancedSkus(): WebSiteManagementModels.SkuDescription[] {
+        return [
             {
                 name: 'B2',
                 tier: 'Basic',
@@ -102,13 +130,6 @@ export class AppServicePlanSkuStep extends AzureWizardPromptStep<IAppServiceWiza
                 tier: 'Standard',
                 size: 'S3',
                 family: 'S',
-                capacity: 1
-            },
-            {
-                name: 'P1v2',
-                tier: 'Premium V2',
-                size: 'P1v2',
-                family: 'Pv2',
                 capacity: 1
             },
             {
@@ -149,6 +170,32 @@ export class AppServicePlanSkuStep extends AzureWizardPromptStep<IAppServiceWiza
                 tier: 'Elastic Premium',
                 size: 'EP3',
                 family: 'EP',
+                capacity: 1
+            }
+        ];
+    }
+
+    private getWorkflowStandardSkus(): WebSiteManagementModels.SkuDescription[] {
+        return [
+            {
+                name: 'WS1',
+                tier: 'Workflow Standard',
+                size: 'WS1',
+                family: 'WS',
+                capacity: 1
+            },
+            {
+                name: 'WS2',
+                tier: 'Workflow Standard',
+                size: 'WS2',
+                family: 'WS',
+                capacity: 1
+            },
+            {
+                name: 'WS3',
+                tier: 'Workflow Standard',
+                size: 'WS3',
+                family: 'WS',
                 capacity: 1
             }
         ];

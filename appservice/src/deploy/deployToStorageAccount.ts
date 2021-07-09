@@ -15,6 +15,7 @@ import { ext } from '../extensionVariables';
 import { localize } from '../localize';
 import { SiteClient } from '../SiteClient';
 import { randomUtils } from '../utils/randomUtils';
+import { IDeployContext } from './IDeployContext';
 import { runWithZipStream } from './runWithZipStream';
 
 dayjs.extend(relativeTime);
@@ -25,7 +26,9 @@ dayjs.extend(utc);
  * To deploy with Run from Package on a Windows plan, create the app setting "WEBSITE_RUN_FROM_PACKAGE" and set it to "1".
  * Then deploy via "zipdeploy" as usual.
  */
-export async function deployToStorageAccount(context: IActionContext, fsPath: string, client: SiteClient): Promise<void> {
+export async function deployToStorageAccount(context: IDeployContext, fsPath: string, client: SiteClient): Promise<void> {
+    context.telemetry.properties.useStorageAccountDeploy = 'true';
+
     const datePart: string = dayjs().utc().format('YYYYMMDDHHmmss');
     const randomPart: string = randomUtils.getRandomHexString(32);
     const blobName: string = `${datePart}-${randomPart}.zip`;
@@ -33,12 +36,13 @@ export async function deployToStorageAccount(context: IActionContext, fsPath: st
     const blobService: BlobServiceClient = await createBlobServiceClient(client);
     const blobUrl: string = await createBlobFromZip(context, fsPath, client, blobService, blobName);
     const appSettings: WebSiteManagementModels.StringDictionary = await client.listApplicationSettings();
-    // tslint:disable-next-line:strict-boolean-expressions
     appSettings.properties = appSettings.properties || {};
     delete appSettings.properties.WEBSITE_RUN_FROM_ZIP; // delete old app setting name if it exists
     appSettings.properties.WEBSITE_RUN_FROM_PACKAGE = blobUrl;
     await client.updateApplicationSettings(appSettings);
     ext.outputChannel.appendLog(localize('deploymentSuccessful', 'Deployment successful.'), { resourceName: client.fullName });
+
+    context.syncTriggersPostDeploy = true;
 }
 
 async function createBlobServiceClient(client: SiteClient): Promise<BlobServiceClient> {
@@ -78,14 +82,15 @@ async function createBlobFromZip(context: IActionContext, fsPath: string, client
 
     const blobClient: BlockBlobClient = containerClient.getBlockBlobClient(blobName);
 
-    await runWithZipStream(context, fsPath, client, async zipStream => {
-        ext.outputChannel.appendLog(localize('creatingBlob', 'Uploading zip package to storage container...'), { resourceName: client.fullName });
-        await blobClient.uploadStream(zipStream);
+    await runWithZipStream(context, {
+        fsPath, client, callback: async zipStream => {
+            ext.outputChannel.appendLog(localize('creatingBlob', 'Uploading zip package to storage container...'), { resourceName: client.fullName });
+            await blobClient.uploadStream(zipStream);
+        }
     });
 
-    // NOTE: the `result` from `uploadStream` above doesn't actually have the contentLength - thus we have to make a seperate call here
-    // tslint:disable-next-line: no-floating-promises
-    blobClient.getProperties().then(r => {
+    // NOTE: the `result` from `uploadStream` above doesn't actually have the contentLength - thus we have to make a separate call here
+    void blobClient.getProperties().then(r => {
         context.telemetry.measurements.blobSize = Number(r.contentLength);
     });
 

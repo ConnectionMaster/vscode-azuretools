@@ -56,7 +56,7 @@ export async function connectToGitHub(client: SiteClient, context: IConnectToGit
             ext.outputChannel.appendLog(connectingToGithub);
             await verifyNoRunFromPackageSetting(client);
             await client.updateSourceControl(siteSourceControl);
-            vscode.window.showInformationMessage(connectedToGithub);
+            void vscode.window.showInformationMessage(connectedToGithub);
             ext.outputChannel.appendLog(connectedToGithub);
         });
     } catch (err) {
@@ -95,7 +95,6 @@ async function showGitHubAuthPrompt(client: SiteClient, context: IConnectToGitHu
 }
 
 export async function getGitHubJsonResponse<T>(context: IConnectToGitHubWizardContext, url: string): Promise<[T, string | undefined]> {
-    // tslint:disable-next-line: strict-boolean-expressions
     context.gitHubClient = context.gitHubClient || await createGitHubClient(context);
 
     // Reference for GitHub REST routes
@@ -167,6 +166,7 @@ export async function getGitHubQuickPicksWithLoadMore<T>(context: IConnectToGitH
     do {
         const [result, nextLink]: [T[], string | undefined] = await getGitHubJsonResponse<T[]>(context, url);
         gitHubQuickPicks = gitHubQuickPicks.concat(result);
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
         url = nextLink;
     } while (url && startTime + timeoutMs > Date.now());
 

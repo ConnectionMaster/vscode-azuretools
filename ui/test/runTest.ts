@@ -10,6 +10,9 @@ async function main(): Promise<void> {
     try {
         await runTests({
             extensionDevelopmentPath: path.resolve(__dirname, '..', '..', 'test', 'extension'),
+            launchArgs: [
+                '--disable-workspace-trust'
+            ],
             extensionTestsPath: path.resolve(__dirname, './index'),
             extensionTestsEnv: {
                 DEBUGTELEMETRY: 'v'
@@ -21,5 +24,4 @@ async function main(): Promise<void> {
     }
 }
 
-// tslint:disable-next-line: no-floating-promises
-main();
+void main();

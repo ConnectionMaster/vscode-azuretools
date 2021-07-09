@@ -9,10 +9,13 @@ export * from './createAppService/AppInsightsListStep';
 export { AppKind, WebsiteOS } from './createAppService/AppKind';
 export * from './createAppService/AppServicePlanCreateStep';
 export * from './createAppService/AppServicePlanListStep';
+export * from './createAppService/AppServicePlanSkuStep';
+export * from './createAppService/CustomLocationListStep';
 export * from './createAppService/IAppServiceWizardContext';
 export * from './createAppService/setLocationsTask';
 export * from './createAppService/SiteNameStep';
 export * from './createAppService/SiteOSStep';
+export * from './createKuduClient';
 export * from './createSlot';
 export * from './deleteSite';
 export * from './deploy/deploy';
@@ -27,7 +30,6 @@ export * from './editScmType';
 export { registerAppServiceExtensionVariables } from './extensionVariables';
 export { IConnectToGitHubWizardContext } from './github/IConnectToGitHubWizardContext';
 export * from './IAppSettingsClient';
-export * from './ISimplifiedSiteClient';
 export * from './pingFunctionApp';
 export * from './registerSiteCommand';
 export * from './remoteDebug/remoteDebugCommon';
@@ -48,4 +50,3 @@ export * from './tree/SiteFilesTreeItem';
 export * from './tryGetSiteResource';
 export * from './TunnelProxy';
 
-// Adding a comment here otherwise "source.organizeImports" will cause duplicate blank lines and tslint will complain

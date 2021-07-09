@@ -3,10 +3,8 @@
  *  Licensed under the MIT License. See License.md in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-// tslint:disable: no-unsafe-any // Lots of plugin functions use any
-
 import { CleanWebpackPlugin } from 'clean-webpack-plugin';
-import * as FileManagerPlugin from 'filemanager-webpack-plugin';
+import * as CopyWebpackPlugin from 'copy-webpack-plugin';
 import * as fse from 'fs-extra';
 import * as path from 'path';
 import * as TerserPlugin from 'terser-webpack-plugin';
@@ -18,8 +16,6 @@ import { excludeNodeModulesAndDependencies, PackageLock } from './excludeNodeMod
 // Using webpack helps reduce the install and startup time of large extensions by reducing the large number of files into a much smaller set
 // Full webpack documentation: [https://webpack.js.org/configuration/]().
 
-// tslint:disable:no-any // A lot of the plug-ins use functions with any arguments
-
 type MessageVerbosity = Exclude<Verbosity, 'silent'>;
 
 const verbosityMap: Map<Verbosity, number> = new Map<Verbosity, number>();
@@ -30,20 +26,18 @@ verbosityMap.set('debug', 2);
 const defaultExternalNodeModules: string[] = [
     // contain dynamically-loaded binaries
     'clipboardy',
-    'opn'
+    'opn', // Superseded by 'open' in vscode-azureextensionui v0.41.0+
+    'open'
 ];
 
-// tslint:disable-next-line:max-func-body-length
 export function getDefaultWebpackConfig(options: DefaultWebpackOptions): webpack.Configuration {
-    // tslint:disable-next-line: strict-boolean-expressions
     const loggingVerbosity: Verbosity = options.verbosity || 'normal';
 
     // Only use defaultExternalNodeModules entries that are actually in package-lock.json
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
     const packageLockJson: PackageLock = fse.readJsonSync(path.resolve(options.projectRoot, 'package-lock.json'));
-    // tslint:disable-next-line: strict-boolean-expressions
     const existingDefaultExtNodeModules: string[] = defaultExternalNodeModules.filter((moduleName: string) => packageLockJson.dependencies && !!packageLockJson.dependencies[moduleName]);
 
-    // tslint:disable-next-line: strict-boolean-expressions
     const externalNodeModules: string[] = (options.externalNodeModules || []).concat(existingDefaultExtNodeModules);
     log('debug', 'External node modules:', externalNodeModules);
 
@@ -113,24 +107,25 @@ export function getDefaultWebpackConfig(options: DefaultWebpackOptions): webpack
         },
         plugins: [
             // Copy files to dist folder where the runtime can find them
-            new FileManagerPlugin({
-                onEnd: {
-                    copy: [
-                        // Test files -> dist/test (these files are ignored during packaging)
-                        {
-                            source: path.join(options.projectRoot, 'out', 'test'),
-                            destination: path.join(options.projectRoot, 'dist', 'test')
-                        },
-                        {
-                            source: path.join(options.projectRoot, 'node_modules', 'vscode-azureextensionui', 'resources', '**', '*.svg'),
-                            destination: path.join(options.projectRoot, 'dist', 'node_modules', 'vscode-azureextensionui', 'resources')
-                        },
-                        {
-                            source: path.join(options.projectRoot, 'node_modules', 'vscode-azureappservice', 'resources', '**', '*.svg'),
-                            destination: path.join(options.projectRoot, 'dist', 'node_modules', 'vscode-azureappservice', 'resources')
-                        }
-                    ]
-                }
+            new CopyWebpackPlugin({
+                patterns: [
+                    // Test files -> dist/test (these files are ignored during packaging)
+                    {
+                        from: path.join(options.projectRoot, 'out', 'test'),
+                        to: path.join(options.projectRoot, 'dist', 'test'),
+                        noErrorOnMissing: true
+                    },
+                    {
+                        from: toGlobSafePath(path.join(options.projectRoot, 'node_modules', 'vscode-azureextensionui', 'resources', '**', '*.svg')),
+                        to: path.join(options.projectRoot, 'dist'),
+                        noErrorOnMissing: true
+                    },
+                    {
+                        from: toGlobSafePath(path.join(options.projectRoot, 'node_modules', 'vscode-azureappservice', 'resources', '**', '*.svg')),
+                        to: path.join(options.projectRoot, 'dist'),
+                        noErrorOnMissing: true
+                    }
+                ]
             }),
 
             // Fix error:
@@ -143,8 +138,10 @@ export function getDefaultWebpackConfig(options: DefaultWebpackOptions): webpack
                 // Whenever there is a dynamic require that webpack can't analyze at all (i.e. resourceRegExp=/^\./), ...
                 /^\./,
                 // CONSIDER: Is there a type for the context argument?  Can't seem to find one.
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 (context: any): void => {
                     // ... and the call was from within node_modules/ms-rest/lib...
+                    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
                     if (/node_modules[/\\]ms-rest[/\\]lib/.test(context.context)) {
                         /* CONSIDER: Figure out how to make this work properly.
 
@@ -157,16 +154,17 @@ export function getDefaultWebpackConfig(options: DefaultWebpackOptions): webpack
                         // In the meantime, just ignore the error by telling webpack we've solved the critical dependency issue.
                         // The consequences of ignoring this error are that
                         //   the Azure SDKs (e.g. azure-arm-resource) don't get their info stamped into the user agent info for their calls.
+                        /* eslint-disable @typescript-eslint/no-unsafe-member-access */
                         for (const d of context.dependencies) {
                             if (d.critical) {
                                 d.critical = false;
                             }
                         }
+                        /* eslint-enable @typescript-eslint/no-unsafe-member-access */
                     }
                 }),
 
             // Caller-supplied plugins
-            // tslint:disable-next-line: strict-boolean-expressions
             ...(options.plugins || [])
         ],
 
@@ -199,7 +197,6 @@ export function getDefaultWebpackConfig(options: DefaultWebpackOptions): webpack
                 // }
 
                 // Caller-supplied rules
-                // tslint:disable-next-line: strict-boolean-expressions
                 ...(options.loaderRules || [])
             ]
         }
@@ -207,7 +204,7 @@ export function getDefaultWebpackConfig(options: DefaultWebpackOptions): webpack
 
     // Clean the dist folder before webpacking
     if (!options.suppressCleanDistFolder) {
-        // tslint:disable-next-line:no-non-null-assertion
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         config.plugins!.push(
             new CleanWebpackPlugin(
                 {
@@ -223,12 +220,20 @@ export function getDefaultWebpackConfig(options: DefaultWebpackOptions): webpack
 }
 
 function logCore(loggingVerbosity: Verbosity, messageVerbosity: MessageVerbosity, ...args: unknown[]): void {
-    // tslint:disable-next-line:no-non-null-assertion
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const loggingVerbosityValue: number = verbosityMap.get(loggingVerbosity)!;
-    // tslint:disable-next-line:no-non-null-assertion
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const messageVerbosityValue: number = verbosityMap.get(messageVerbosity)!;
 
     if (messageVerbosityValue >= loggingVerbosityValue) {
         console.log(...args);
     }
+}
+
+/**
+ * We always want to use posix separators for glob paths
+ * See https://github.com/microsoft/vscode-azuretools/issues/879 and https://github.com/webpack-contrib/copy-webpack-plugin#from
+ */
+function toGlobSafePath(fsPath: string): string {
+    return fsPath.replace(/\\/g, '/');
 }

@@ -43,7 +43,6 @@ export namespace taskUtils {
     }
 
     export async function findTask(deployFsPath: string, taskName: string, tasks?: Task[]): Promise<Task | undefined> {
-        // tslint:disable-next-line: strict-boolean-expressions
         tasks = tasks || await codeTasks.fetchTasks();
         taskName = taskName.toLowerCase();
         return tasks.find(t => {
@@ -59,9 +58,8 @@ export namespace taskUtils {
      * Handles condition where we don't need to start the task because it's already running
      */
     export async function executeIfNotActive(task: Task): Promise<void> {
-        // Temporarily disable this behavior because it's not worth the trouble caused by https://github.com/microsoft/vscode/issues/112247
-        // if (!codeTasks.taskExecutions.find(t => isTaskEqual(t.task, task))) {
-        await codeTasks.executeTask(task);
-        // }
+        if (!codeTasks.taskExecutions.find(t => isTaskEqual(t.task, task))) {
+            await codeTasks.executeTask(task);
+        }
     }
 }

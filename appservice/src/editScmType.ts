@@ -20,8 +20,7 @@ export async function editScmType(context: IActionContext, client: SiteClient, s
     }
 
     const config: WebSiteManagementModels.SiteConfigResource = await client.getSiteConfig();
-    // tslint:disable-next-line:strict-boolean-expressions
-    newScmType = newScmType ? newScmType : await showScmPrompt(nonNullProp(config, 'scmType'));
+    newScmType = newScmType ? newScmType : await showScmPrompt(context, nonNullProp(config, 'scmType'));
     if (newScmType === ScmType.GitHub) {
         if (config.scmType !== ScmType.None) {
             // GitHub cannot be configured if there is an existing configuration source-- a limitation of Azure
@@ -36,7 +35,7 @@ export async function editScmType(context: IActionContext, client: SiteClient, s
     if (showToast) {
         const scmTypeUpdated: string = localize('deploymentSourceUpdated,', 'Deployment source for "{0}" has been updated to "{1}".', client.fullName, newScmType);
         ext.outputChannel.appendLog(scmTypeUpdated);
-        window.showInformationMessage(scmTypeUpdated);
+        void window.showInformationMessage(scmTypeUpdated);
     }
 
     if (newScmType === ScmType.LocalGit) {
@@ -51,7 +50,7 @@ export async function editScmType(context: IActionContext, client: SiteClient, s
     return newScmType;
 }
 
-async function showScmPrompt(currentScmType: string): Promise<ScmType> {
+async function showScmPrompt(context: IActionContext, currentScmType: string): Promise<ScmType> {
     const currentSource: string = localize('currentSource', '(Current source)');
     const scmQuickPicks: IAzureQuickPickItem<ScmType | undefined>[] = [];
     // generate quickPicks to not include current type
@@ -69,7 +68,7 @@ async function showScmPrompt(currentScmType: string): Promise<ScmType> {
         placeHolder: localize('scmPrompt', 'Select a new source.'),
         suppressPersistence: true
     };
-    const newScmType: ScmType | undefined = (await ext.ui.showQuickPick(scmQuickPicks, options)).data;
+    const newScmType: ScmType | undefined = (await context.ui.showQuickPick(scmQuickPicks, options)).data;
     if (newScmType === undefined) {
         // if the user clicks the current source, treat it as a cancel
         throw new UserCancelledError();

@@ -3,12 +3,13 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+/* eslint-disable */
+
 import * as htmlToText from 'html-to-text';
 import { IParsedError } from '../index';
 import { localize } from './localize';
+import { parseJson } from './utils/parseJson';
 
-// tslint:disable:no-unsafe-any
-// tslint:disable:no-any
 export function parseError(error: any): IParsedError {
     let errorType: string = '';
     let message: string = '';
@@ -64,7 +65,6 @@ export function parseError(error: any): IParsedError {
 
     [message, errorType] = parseIfFileSystemError(message, errorType);
 
-    // tslint:disable-next-line:strict-boolean-expressions
     errorType = errorType || typeof (error);
     message = message || localize('unknownError', 'Unknown Error');
 
@@ -98,7 +98,7 @@ function convertCodeToError(errorType: string | undefined): string | undefined {
 function parseIfJson(o: any): any {
     if (typeof o === 'string' && o.indexOf('{') >= 0) {
         try {
-            return JSON.parse(o);
+            return parseJson(o);
         } catch (err) {
             // ignore
         }
@@ -157,7 +157,7 @@ function unpackErrorFromField(error: any, prop: string): any {
     if (field) {
         if (typeof field === 'string' && field.indexOf('{') >= 0) {
             try {
-                field = JSON.parse(field);
+                field = parseJson(field);
             } catch (err) {
                 // Ignore
             }
@@ -178,9 +178,8 @@ function unpackErrorFromField(error: any, prop: string): any {
  * Final minified line:
  * FileService.StorageServiceClient._processResponse azure-storage/storageserviceclient.js:751:50
  */
-function getCallstack(error: { stack?: string }): string | undefined {
-    // tslint:disable-next-line: strict-boolean-expressions
-    const stack: string = error.stack || '';
+function getCallstack(error: { stack?: unknown }): string | undefined {
+    const stack: string = typeof error.stack === 'string' ? error.stack : '';
 
     const minifiedLines: (string | undefined)[] = stack
         .split(/(\r\n|\n)/g) // split by line ending

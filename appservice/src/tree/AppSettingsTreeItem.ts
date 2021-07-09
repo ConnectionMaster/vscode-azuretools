@@ -4,10 +4,10 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { WebSiteManagementModels } from '@azure/arm-appservice';
+import { ThemeIcon } from 'vscode';
 import { AzExtParentTreeItem, AzExtTreeItem, IActionContext, ICreateChildImplContext, TreeItemIconPath } from 'vscode-azureextensionui';
 import { IAppSettingsClient } from '../IAppSettingsClient';
 import { AppSettingTreeItem } from './AppSettingTreeItem';
-import { getThemedIconPath } from './IconPath';
 
 export function validateAppSettingKey(settings: WebSiteManagementModels.StringDictionary, client: IAppSettingsClient, newKey: string, oldKey?: string): string | undefined {
     if (client.isLinux && /[^\w\.]+/.test(newKey)) {
@@ -38,6 +38,7 @@ export class AppSettingsTreeItem extends AzExtParentTreeItem {
     public readonly contextValue: string = AppSettingsTreeItem.contextValue;
     public readonly client: IAppSettingsClient;
     public readonly supportsSlots: boolean;
+    public suppressMaskLabel: boolean = true;
     private _settings: WebSiteManagementModels.StringDictionary | undefined;
     private readonly _settingsToHide: string[] | undefined;
 
@@ -53,7 +54,7 @@ export class AppSettingsTreeItem extends AzExtParentTreeItem {
     }
 
     public get iconPath(): TreeItemIconPath {
-        return getThemedIconPath('settings');
+        return new ThemeIcon('settings');
     }
     public hasMoreChildrenImpl(): boolean {
         return false;
@@ -62,7 +63,6 @@ export class AppSettingsTreeItem extends AzExtParentTreeItem {
     public async loadMoreChildrenImpl(_clearCache: boolean): Promise<AzExtTreeItem[]> {
         this._settings = await this.client.listApplicationSettings();
         const treeItems: AppSettingTreeItem[] = [];
-        // tslint:disable-next-line:strict-boolean-expressions
         const properties: { [name: string]: string } = this._settings.properties || {};
         await Promise.all(Object.keys(properties).map(async (key: string) => {
             const appSettingTreeItem: AppSettingTreeItem = await AppSettingTreeItem.createAppSettingTreeItem(this, this.client, key, properties[key]);
@@ -76,7 +76,7 @@ export class AppSettingsTreeItem extends AzExtParentTreeItem {
 
     public async editSettingItem(oldKey: string, newKey: string, value: string, context: IActionContext): Promise<void> {
         // make a deep copy so settings are not cached if there's a failure
-        // tslint:disable-next-line: no-unsafe-any
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
         const settings: WebSiteManagementModels.StringDictionary = JSON.parse(JSON.stringify(await this.ensureSettings(context)));
         if (settings.properties) {
             if (oldKey !== newKey) {
@@ -90,7 +90,7 @@ export class AppSettingsTreeItem extends AzExtParentTreeItem {
 
     public async deleteSettingItem(key: string, context: IActionContext): Promise<void> {
         // make a deep copy so settings are not cached if there's a failure
-        // tslint:disable-next-line: no-unsafe-any
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
         const settings: WebSiteManagementModels.StringDictionary = JSON.parse(JSON.stringify(await this.ensureSettings(context)));
 
         if (settings.properties) {
@@ -102,7 +102,7 @@ export class AppSettingsTreeItem extends AzExtParentTreeItem {
 
     public async createChildImpl(context: ICreateChildImplContext): Promise<AzExtTreeItem> {
         // make a deep copy so settings are not cached if there's a failure
-        // tslint:disable-next-line: no-unsafe-any
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
         const settings: WebSiteManagementModels.StringDictionary = JSON.parse(JSON.stringify(await this.ensureSettings(context)));
         const newKey: string = await context.ui.showInputBox({
             prompt: 'Enter new app setting name',

@@ -5,11 +5,9 @@
 
 import { ResourceManagementModels } from '@azure/arm-resources';
 import { StorageManagementModels } from '@azure/arm-storage';
-import { SubscriptionModels } from '@azure/arm-subscriptions';
 import { Environment } from '@azure/ms-rest-azure-env';
-import { ServiceClient, ServiceClientCredentials } from '@azure/ms-rest-js';
-import { TokenCredentialsBase } from '@azure/ms-rest-nodeauth';
-import { Disposable, Event, ExtensionContext, FileChangeEvent, FileChangeType, FileStat, FileSystemProvider, FileType, InputBoxOptions, Memento, MessageItem, MessageOptions, OpenDialogOptions, OutputChannel, Progress, QuickPickItem, QuickPickOptions, TextDocument, TextDocumentShowOptions, ThemeIcon, TreeDataProvider, TreeItem, Uri } from 'vscode';
+import { HttpOperationResponse, RequestPrepareOptions, ServiceClient } from '@azure/ms-rest-js';
+import { Disposable, Event, ExtensionContext, FileChangeEvent, FileChangeType, FileStat, FileSystemProvider, FileType, InputBoxOptions, MessageItem, MessageOptions, OpenDialogOptions, OutputChannel, Progress, QuickPickItem, QuickPickOptions, TextDocumentShowOptions, ThemeIcon, TreeDataProvider, TreeItem, Uri } from 'vscode';
 import { TargetPopulation } from 'vscode-tas-client';
 import { AzureExtensionApi, AzureExtensionApiProvider } from './api';
 
@@ -140,16 +138,32 @@ export abstract class SubscriptionTreeItemBase extends AzureParentTreeItem {
 }
 
 /**
+ * Loose interface to allow for the use of different versions of "@azure/ms-rest-js"
+ * There's several cases where we don't control which "credentials" interface gets used, causing build errors even though the functionality itself seems to be compatible
+ * For example: https://github.com/Azure/azure-sdk-for-js/issues/10045
+ */
+export interface AzExtServiceClientCredentials {
+    /**
+     * Signs a request with the Authentication header.
+     *
+     * @param {WebResourceLike} webResource The WebResourceLike/request to be signed.
+     * @returns {Promise<WebResourceLike>} The signed request object;
+     */
+    signRequest(webResource: any): Promise<any>;
+}
+
+/**
  * Information specific to the Subscription
  */
 export interface ISubscriptionContext {
-    credentials: TokenCredentialsBase;
+    credentials: AzExtServiceClientCredentials;
     subscriptionDisplayName: string;
     subscriptionId: string;
     subscriptionPath: string;
     tenantId: string;
     userId: string;
     environment: Environment;
+    isCustomCloud: boolean;
 }
 
 export type TreeItemIconPath = string | Uri | { light: string | Uri; dark: string | Uri } | ThemeIcon;
@@ -192,6 +206,17 @@ export declare abstract class AzExtTreeItem {
     public readonly fullId: string;
     public readonly parent?: AzExtParentTreeItem;
     public readonly treeDataProvider: AzExtTreeDataProvider;
+
+    /**
+     * Values to mask in error messages whenever an action uses this tree item
+     * NOTE: Some values are automatically masked without the need to add anything here, like the label and parts of the id if it's an Azure id
+     */
+    public readonly valuesToMask: string[];
+
+    /**
+     * Set to true if the label of this tree item does not need to be masked
+     */
+    public suppressMaskLabel?: boolean;
 
     /**
      * @param parent The parent of the new tree item or 'undefined' if it is a root item
@@ -480,51 +505,6 @@ export declare class UserCancelledError extends Error { }
 
 export declare class NoResourceFoundError extends Error { }
 
-/**
- * @deprecated Use `AzExtTreeFileSystem` instead
- */
-export declare abstract class BaseEditor<ContextT> implements Disposable {
-    /**
-    * Implement this interface if you need to download and upload remote files
-    * @param showSavePromptKey Key used globally by VS Code to determine whether or not to show the savePrompt
-    */
-    constructor(showSavePromptKey: string);
-
-    /**
-     * Implement this to retrieve data from your remote server, returns the file as a string
-     */
-    abstract getData(context: ContextT): Promise<string>;
-
-    /**
-     * Implement this to allow for remote updating
-     */
-    abstract updateData(context: ContextT, data: string): Promise<string>;
-
-    /**
-     * Implement this to return the file name from the remote
-     */
-    abstract getFilename(context: ContextT): Promise<string>;
-
-    /**
-     * Implement this to return the resource name from the remote
-     */
-    abstract getResourceName(context: ContextT): Promise<string>;
-
-    /**
-     * Implement this to return the size in MB.
-     */
-    abstract getSize(context: ContextT): Promise<number>;
-
-    /**
-     * Implement this to edit what is displayed to the user when uploading the file to the remote
-     */
-    abstract getSaveConfirmationText(context: ContextT): Promise<string>;
-
-    onDidSaveTextDocument(actionContext: IActionContext, globalState: Memento, doc: TextDocument): Promise<void>;
-    showEditor(context: ContextT, sizeLimit?: number): Promise<void>;
-    dispose(): Promise<void>;
-}
-
 export type CommandCallback = (context: IActionContext, ...args: any[]) => any;
 
 /**
@@ -579,7 +559,9 @@ export interface IActionContext {
     errorHandling: IErrorHandlingContext;
 
     /**
-     * Action-specific alternative to `ext.ui`
+     * Custom implementation of common methods that handle user input (as opposed to using `vscode.window`)
+     * Provides additional functionality to support wizards, grouping, 'recently used', telemetry, etc.
+     * For more information, see the docs on each method and on each `options` object
      */
     ui: IAzureUserInput;
 
@@ -611,6 +593,11 @@ export interface ITelemetryContext {
      * Defaults to `false`. If true, all events are suppressed from telemetry.
      */
     suppressAll?: boolean;
+
+    /**
+     * If true, any error message for this event will not be tracked in telemetry
+     */
+    maskEntireErrorMessage?: boolean;
 }
 
 export interface AzExtErrorButton extends MessageItem {
@@ -688,6 +675,14 @@ type ErrorHandler = (context: IErrorHandlerContext) => void;
 
 type TelemetryHandler = (context: IHandlerContext) => void;
 
+type OnActionStartHandler = (context: IHandlerContext) => void;
+
+/**
+ * Register a handler to run right after an `IActionContext` is created and before the action starts
+ * NOTE: If more than one handler is registered, they are run in an arbitrary order.
+ */
+export function registerOnActionStartHandler(handler: OnActionStartHandler): Disposable;
+
 /**
  * Register a handler to run after a callback errors out, but before the default error handling.
  * NOTE: If more than one handler is registered, they are run in an arbitrary order.
@@ -709,14 +704,18 @@ export interface IParsedError {
     isUserCancelledError: boolean;
 }
 
-export type PromptResult = string | QuickPickItem | QuickPickItem[] | MessageItem | Uri[];
+export type PromptResult = {
+    value: string | QuickPickItem | QuickPickItem[] | MessageItem | Uri[];
+
+    /**
+     * True if the user did not change from the default value, currently only supported for `showInputBox`
+     */
+    matchesDefault?: boolean;
+};
 
 /**
- * Wrapper interface of several `vscode.window` methods that handle user input. The main reason for this interface
- * is to facilitate unit testing in non-interactive mode with the `TestUserInput` class.
- * However, the `AzureUserInput` class does have a few minor differences from default vscode behavior:
- * 1. Automatically throws a `UserCancelledError` instead of returning undefined when a user cancels
- * 2. Persists 'recently used' items in quick picks and displays them at the top
+ * Wrapper interface of several methods that handle user input
+ * The implementations of this interface are accessed through `IActionContext.ui` or `TestActionContext.ui` (in the "vscode-azureextensiondev" package)
  */
 export interface IAzureUserInput {
     readonly onDidFinishPrompt: Event<PromptResult>;
@@ -784,25 +783,6 @@ export interface IAzureUserInput {
 }
 
 /**
- * Wrapper class of several `vscode.window` methods that handle user input.
- */
-export declare class AzureUserInput implements IAzureUserInput {
-    readonly onDidFinishPrompt: Event<PromptResult>;
-
-    /**
-     * @param persistence Used to persist previous selections in the QuickPick.
-     */
-    public constructor(persistence: Memento);
-
-    public showQuickPick<T extends QuickPickItem>(items: T[] | Thenable<T[]>, options: QuickPickOptions & { canPickMany: true }): Promise<T[]>;
-    public showQuickPick<T extends QuickPickItem>(items: T[] | Thenable<T[]>, options: QuickPickOptions): Promise<T>;
-    public showInputBox(options: InputBoxOptions): Promise<string>;
-    public showWarningMessage<T extends MessageItem>(message: string, ...items: T[]): Promise<T>;
-    public showWarningMessage<T extends MessageItem>(message: string, options: MessageOptions, ...items: T[]): Promise<MessageItem>;
-    public showOpenDialog(options: OpenDialogOptions): Promise<Uri[]>;
-}
-
-/**
  * Provides additional options for QuickPickItems used in Azure Extensions
  */
 export interface IAzureQuickPickItem<T = undefined> extends QuickPickItem {
@@ -813,6 +793,17 @@ export interface IAzureQuickPickItem<T = undefined> extends QuickPickItem {
     id?: string;
 
     data: T;
+
+    /**
+     * Callback to use when this item is picked, instead of returning the pick
+     * This is not compatible with `canPickMany`
+     */
+    onPicked?: () => void | Promise<void>;
+
+    /**
+     * The group that this pick belongs to. Set `IAzureQuickPickOptions.enableGrouping` for this property to take effect
+     */
+    group?: string;
 
     /**
      * Optionally used to suppress persistence for this item, defaults to `false`
@@ -841,9 +832,20 @@ export interface IAzureQuickPickOptions extends QuickPickOptions {
     isPickSelected?: (p: QuickPickItem) => boolean;
 
     /**
-     * Optional message to display while the quick pick is loading instead of the normal placeHolder. Only applies for quick picks used as a part of an `AzureWizard`
+     * If true, you must specify a `group` property on each `IAzureQuickPickItem` and the picks will be grouped into collapsible sections
+     * This is not compatible with `canPickMany`
+     */
+    enableGrouping?: boolean;
+
+    /**
+     * Optional message to display while the quick pick is loading instead of the normal placeHolder.
      */
     loadingPlaceHolder?: string;
+
+    /**
+     * Optional message to display when no picks are found
+     */
+    noPicksMessage?: string;
 }
 
 /**
@@ -899,6 +901,12 @@ export declare abstract class AzureWizardExecuteStep<T extends IActionContext> {
     public abstract priority: number;
 
     /**
+     * Optional id used to determine if this step is unique, for things like caching values and telemetry
+     * If not specified, the class name will be used instead
+     */
+    public id?: string;
+
+    /**
      * Execute the step
      */
     public abstract execute(wizardContext: T, progress: Progress<{ message?: string; increment?: number }>): Promise<void>;
@@ -918,8 +926,15 @@ export declare abstract class AzureWizardPromptStep<T extends IActionContext> {
 
     /**
      * If true, multiple steps of the same type can be shown in a wizard. By default, duplicate steps are filtered out
+     * NOTE: You can also use the `id` property to prevent a step from registering as a duplicate in the first place
      */
     public supportsDuplicateSteps: boolean;
+
+    /**
+     * Optional id used to determine if this step is unique, for things like caching values and telemetry
+     * If not specified, the class name will be used instead
+     */
+    public id?: string;
 
     /**
      * Prompt the user for input
@@ -940,22 +955,31 @@ export declare abstract class AzureWizardPromptStep<T extends IActionContext> {
 
 export type ISubscriptionWizardContext = ISubscriptionContext & IActionContext;
 
-export interface ILocationWizardContext extends ISubscriptionWizardContext {
-    /**
-     * The location to use for new resources
-     * This value will be defined after `LocationListStep.prompt` occurs or after you call `LocationListStep.setLocation`
-     */
-    location?: SubscriptionModels.Location;
+/**
+ * Replacement for `SubscriptionModels.Location` because the sdk is pretty far behind in terms of api-version
+ */
+export type AzExtLocation = {
+    id: string;
+    name: string;
+    displayName: string;
+    regionalDisplayName?: string;
+    metadata?: {
+        regionCategory?: string;
+        geographyGroup?: string;
+        regionType?: string;
+        pairedRegion?: { name?: string }[]
+    }
+}
 
-    /**
-     * Optional task to describe the subset of locations that should be displayed.
-     * If not specified, all locations supported by the user's subscription will be displayed.
-     */
-    locationsTask?: Promise<{ name?: string }[]>;
+/**
+ * Currently no location-specific properties on the wizard context, but keeping this interface for backwards compatability and ease of use
+ * Instead, use static methods on `LocationListStep` like `getLocation` and `setLocationSubset`
+ */
+export interface ILocationWizardContext extends ISubscriptionWizardContext {
 }
 
 export declare class LocationListStep<T extends ILocationWizardContext> extends AzureWizardPromptStep<T> {
-    private constructor();
+    protected constructor();
 
     /**
      * Adds a LocationListStep to the wizard.  This function will ensure there is only one LocationListStep per wizard context.
@@ -967,19 +991,56 @@ export declare class LocationListStep<T extends ILocationWizardContext> extends 
     /**
      * This will set the wizard context's location (in which case the user will _not_ be prompted for location)
      * For example, if the user selects an existing resource, you might want to use that location as the default for the wizard's other resources
+     * This _will_ set the location even if not all providers support it - in the hopes that a related location can be found during `getLocation`
      * @param wizardContext The context of the wizard
      * @param name The name or display name of the location
      */
     public static setLocation<T extends ILocationWizardContext>(wizardContext: T, name: string): Promise<void>;
 
     /**
+     * Specify a task that will be used to filter locations
+     * @param wizardContext The context of the wizard
+     * @param task A task evaluating to the locations supported by this provider
+     * @param provider The relevant provider (i.e. 'Microsoft.Web')
+     */
+    public static setLocationSubset<T extends ILocationWizardContext>(wizardContext: T, task: Promise<string[]>, provider: string): void;
+
+    /**
+     * Adds default location filtering for a provider
+     * If more granular filtering is needed, use `setLocationSubset` instead (i.e. if the provider further filters locations based on features)
+     * @param wizardContext The context of the wizard
+     * @param provider The provider (i.e. 'Microsoft.Storage')
+     * @param resourceType The resource type (i.e. 'storageAccounts')
+     */
+    public static addProviderForFiltering<T extends ILocationWizardContext>(wizardContext: T, provider: string, resourceType: string): void;
+
+    /**
+     * Gets the selected location for this wizard.
+     * @param wizardContext The context of the wizard
+     * @param provider If specified, this will check against that provider's supported locations and attempt to find a "related" location if the selected location is not supported.
+     */
+    public static getLocation<T extends ILocationWizardContext>(wizardContext: T, provider?: string): Promise<AzExtLocation>;
+
+    /**
+     * Returns true if a location has been set on the context
+     */
+    public static hasLocation<T extends ILocationWizardContext>(wizardContext: T): boolean;
+
+    /**
      * Used to get locations. By passing in the context, we can ensure that Azure is only queried once for the entire wizard
      * @param wizardContext The context of the wizard.
      */
-    public static getLocations<T extends ILocationWizardContext>(wizardContext: T): Promise<SubscriptionModels.Location[]>;
+    public static getLocations<T extends ILocationWizardContext>(wizardContext: T): Promise<AzExtLocation[]>;
+
+    /**
+     * Returns true if the given location matches the name
+     */
+    public static locationMatchesName(location: AzExtLocation, name: string): boolean;
 
     public prompt(wizardContext: T): Promise<void>;
     public shouldPrompt(wizardContext: T): boolean;
+
+    protected getQuickPicks(wizardContext: T): Promise<IAzureQuickPickItem<AzExtLocation>[]>;
 }
 
 export interface IAzureNamingRules {
@@ -1227,7 +1288,7 @@ export declare function registerUIExtensionVariables(extVars: UIExtensionVariabl
  * Internal is Microsoft
  * Insiders is anyone installing alpha builds
  * Public is everyone
- * NOTE: if unspecified, this will be Insiders if the extension version contains "alpha", otherwise Public
+ * NOTE: if unspecified, this will be "Team" if the extension is running in the Development Host, "Insiders" if the extension version contains "alpha", otherwise "Public"
  */
 export declare function createExperimentationService(ctx: ExtensionContext, targetPopulation?: TargetPopulation): Promise<IExperimentationServiceAdapter>;
 
@@ -1237,7 +1298,6 @@ export declare function createExperimentationService(ctx: ExtensionContext, targ
 export interface UIExtensionVariables {
     context: ExtensionContext;
     outputChannel: IAzExtOutputChannel;
-    ui: IAzureUserInput;
 
     /**
      * Set to true if not running under a webpacked 'dist' folder as defined in 'vscode-azureextensiondev'
@@ -1294,38 +1354,45 @@ export interface IMinimumServiceClientOptions {
     acceptLanguage?: string,
     baseUri?: string;
     userAgent?: string | ((defaultUserAgent: string) => string);
+
+    /**
+     * NOTE: Using "any" to allow for the use of different versions of "@azure/ms-rest-js", which are largely compatible for our purposes
+     */
+    requestPolicyFactories?: any[] | ((defaultRequestPolicyFactories: any[]) => (void | any[]));
 }
+
+export type AzExtGenericClientInfo = AzExtServiceClientCredentials | { credentials: AzExtServiceClientCredentials; environment: Environment; };
 
 /**
  * Creates a generic http rest client (i.e. for non-Azure calls or for Azure calls that the available sdks don't support), ensuring best practices are followed. For example:
  * 1. Adds extension-specific user agent
  * 2. Uses resourceManagerEndpointUrl to support sovereigns (if clientInfo corresponds to an Azure environment)
  */
-export function createGenericClient(clientInfo?: ServiceClientCredentials | { credentials: ServiceClientCredentials; environment: Environment; }): Promise<ServiceClient>;
+export function createGenericClient(clientInfo?: AzExtGenericClientInfo): Promise<ServiceClient>;
+
+/**
+ * Send request with a timeout specified and turn off retry policy (because retrying could take a lot longer)
+ * @param timeout The timeout in milliseconds
+ */
+export function sendRequestWithTimeout(options: RequestPrepareOptions, timeout: number, clientInfo?: AzExtGenericClientInfo): Promise<HttpOperationResponse>;
 
 /**
  * Creates an Azure client, ensuring best practices are followed. For example:
  * 1. Adds extension-specific user agent
  * 2. Uses resourceManagerEndpointUrl to support sovereigns
- *
- * NOTE: `credentials` is of type `any` because several packages still rely on v1 of "@azure/ms-rest-js", which would cause type conflicts with v2 (even though the breaking changes seem minimal)
- * For example: https://github.com/Azure/azure-sdk-for-js/issues/10045
  */
 export function createAzureClient<T>(
-    clientInfo: { credentials: any; subscriptionId: string; environment: Environment; },
-    clientType: new (credentials: any, subscriptionId: string, options?: IMinimumServiceClientOptions) => T): T;
+    clientInfo: { credentials: AzExtServiceClientCredentials; subscriptionId: string; environment: Environment; },
+    clientType: new (credentials: AzExtServiceClientCredentials, subscriptionId: string, options?: IMinimumServiceClientOptions) => T): T;
 
 /**
  * Creates an Azure subscription client, ensuring best practices are followed. For example:
  * 1. Adds extension-specific user agent
  * 2. Uses resourceManagerEndpointUrl to support sovereigns
- *
- * NOTE: `credentials` is of type `any` because several packages still rely on v1 of "@azure/ms-rest-js", which would cause type conflicts with v2 (even though the breaking changes seem minimal)
- * For example: https://github.com/Azure/azure-sdk-for-js/issues/10045
  */
 export function createAzureSubscriptionClient<T>(
-    clientInfo: { credentials: any; environment: Environment; },
-    clientType: new (credentials: any, options?: IMinimumServiceClientOptions) => T): T;
+    clientInfo: { credentials: AzExtServiceClientCredentials; environment: Environment; },
+    clientType: new (credentials: AzExtServiceClientCredentials, options?: IMinimumServiceClientOptions) => T): T;
 
 /**
  * Wraps an Azure Extension's API in a very basic provider that adds versioning.

@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.md in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import * as FilemanagerWebpackPlugin from 'filemanager-webpack-plugin';
+import * as fse from 'fs-extra';
 import * as path from 'path';
 import * as webpack from 'webpack';
 
@@ -40,23 +40,35 @@ export function excludeNodeModulesAndDependencies(
     const copyEntries: CopyEntry[] = getNodeModuleCopyEntries(projectRoot, externalModulesClosure);
 
     // Tell webpack to not place our modules into bundles
-    // tslint:disable-next-line:strict-boolean-expressions
     webpackConfig.externals = webpackConfig.externals || {};
     log('Excluded node modules (external node modules plus dependencies)', externalModulesClosure);
     Object.assign(webpackConfig.externals, excludeEntries);
 
-    // Tell webpack to copy the given modules' sources into dist\node_modules
-    //   so they can be found through normal require calls.
-    // NOTE: copy-webpack-plugin doesn't work for this. See https://github.com/microsoft/vscode-azuretools/pull/403 and https://github.com/webpack-contrib/copy-webpack-plugin/issues/35
-    // tslint:disable-next-line: strict-boolean-expressions
+    /**
+     * Tell webpack to copy the given modules' sources into dist\node_modules so they can be found through normal require calls.
+     *
+     * NOTE:
+     * copy-webpack-plugin doesn't preserve the executable bit, so we can't use it here. See https://github.com/microsoft/vscode-azuretools/pull/403 and https://github.com/webpack-contrib/copy-webpack-plugin/issues/35
+     * filemanager-webpack-plugin is another option, but it's much less popular and has it's own problems like https://github.com/gregnb/filemanager-webpack-plugin/issues/94
+     * We'll just create our own simple plugin leveraging "fs-extra" to copy the files
+     */
     webpackConfig.plugins = webpackConfig.plugins || [];
-    webpackConfig.plugins.push(new FilemanagerWebpackPlugin(
-        {
-            onEnd: {
-                copy: copyEntries
-            }
+    webpackConfig.plugins.push({
+        apply: (compiler) => {
+            const pluginName = 'AzCodeCopyWorkaround';
+            compiler.hooks.afterEmit.tapPromise(pluginName, async () => {
+                await Promise.all(copyEntries.map(async ce => {
+                    const entryName = path.basename(ce.source);
+                    if (await fse.pathExists(ce.source)) {
+                        log(`${pluginName}: Copying "${entryName}"...`);
+                        await fse.copy(ce.source, ce.destination);
+                    } else {
+                        log(`${pluginName}: Ignoring "${entryName}" because it doesn't exist`);
+                    }
+                }));
+            });
         }
-    ));
+    });
 }
 
 /**
@@ -64,13 +76,12 @@ export function excludeNodeModulesAndDependencies(
  */
 export function getNodeModulesDependencyClosure(packageLock: PackageLock, moduleNames: string[]): string[] {
     const closure: Set<string> = new Set<string>();
-    // tslint:disable-next-line:strict-boolean-expressions no-object-literal-type-assertion
     const dependencies: { [key: string]: DependencyEntry | undefined } = packageLock.dependencies || <{ [key: string]: DependencyEntry }>{};
 
     for (const moduleName of moduleNames) {
         if (dependencies[moduleName]) {
             closure.add(moduleName);
-            // tslint:disable-next-line:no-non-null-assertion
+            // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
             const subdeps: string[] = getDependenciesFromEntry(dependencies[moduleName]!, packageLock);
             for (const subdep of subdeps) {
                 closure.add(subdep);
@@ -105,16 +116,12 @@ function getDependenciesFromEntry(depEntry: DependencyEntry, packageLock: Packag
 
     const closure: Set<string> = new Set<string>();
 
-    // tslint:disable-next-line:strict-boolean-expressions no-object-literal-type-assertion
     const dependencies: { [key: string]: DependencyEntry | undefined } = depEntry.dependencies || <{ [key: string]: DependencyEntry }>{};
-    // tslint:disable-next-line:no-object-literal-type-assertion strict-boolean-expressions
     const requires: { [key: string]: string } = depEntry.requires || <{ [key: string]: string }>{};
 
     // Handle dependencies
     for (const moduleName of Object.keys(dependencies)) {
-        closure.add(moduleName);
-
-        // tslint:disable-next-line:no-non-null-assertion
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         const dependenciesSubdeps: string[] = getDependenciesFromEntry(dependencies[moduleName]!, packageLock);
         for (const subdep of dependenciesSubdeps) {
             closure.add(subdep);
@@ -151,13 +158,6 @@ export function getExternalsEntries(moduleNames: string[]): { [moduleName: strin
 }
 
 export function getNodeModuleCopyEntries(projectRoot: string, moduleNames: string[]): CopyEntry[] {
-    // e.g.
-    // new FilemanagerWebpackPlugin([
-    //     {
-    //         onEnd: {
-    //             copy: [
-    //                 { source: '/root/node_modules/clipboardy', destination: '/root/dist/node_modules/clipboardy' }
-    //     ...
     const copyEntries: CopyEntry[] = [];
     for (const moduleName of moduleNames) {
         copyEntries.push({

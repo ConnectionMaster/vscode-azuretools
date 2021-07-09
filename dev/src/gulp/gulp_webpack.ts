@@ -7,7 +7,6 @@ import * as cp from 'child_process';
 import * as path from 'path';
 import * as process from 'process';
 
-// tslint:disable-next-line: export-name
 export function gulp_webpack(mode: string): cp.ChildProcess {
     const env: {
         [key: string]: string | undefined;
@@ -25,7 +24,7 @@ export function gulp_webpack(mode: string): cp.ChildProcess {
             process.platform === 'win32' ? 'webpack.cmd' : 'webpack'),
         [
             '--mode', mode,
-            '--display', 'minimal'
+            '--stats', 'minimal'
         ],
         {
             stdio: 'inherit',

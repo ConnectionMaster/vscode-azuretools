@@ -22,39 +22,46 @@ export const appInsightsNamingRules: IAzureNamingRules = {
 const skipForNowLabel: string = '$(clock) Skip for now';
 
 export class AppInsightsListStep extends AzureWizardPromptStep<IAppServiceWizardContext> {
-    public static async getAppInsightsComponents(wizardContext: IAppServiceWizardContext): Promise<ApplicationInsightsComponentListResult> {
-        if (wizardContext.appInsightsTask === undefined) {
-            const client: ApplicationInsightsManagementClient = await createAppInsightsClient(wizardContext);
-            wizardContext.appInsightsTask = client.components.list();
-        }
+    private _suppressCreate: boolean | undefined;
 
-        return await wizardContext.appInsightsTask;
+    public constructor(suppressCreate?: boolean) {
+        super();
+        this._suppressCreate = suppressCreate;
     }
 
-    public async prompt(wizardContext: IAppServiceWizardContext): Promise<void> {
-        const options: IAzureQuickPickOptions = { placeHolder: 'Select an Application Insights resource for your app.', id: `AppInsightsListStep/${wizardContext.subscriptionId}` };
-        const input: IAzureQuickPickItem<ApplicationInsightsComponent | undefined> = (await wizardContext.ui.showQuickPick(this.getQuickPicks(wizardContext), options));
-        wizardContext.appInsightsComponent = input.data;
+    public static async getAppInsightsComponents(context: IAppServiceWizardContext): Promise<ApplicationInsightsComponentListResult> {
+        if (context.appInsightsTask === undefined) {
+            const client: ApplicationInsightsManagementClient = await createAppInsightsClient(context);
+            context.appInsightsTask = client.components.list();
+        }
+
+        return await context.appInsightsTask;
+    }
+
+    public async prompt(context: IAppServiceWizardContext): Promise<void> {
+        const options: IAzureQuickPickOptions = { placeHolder: 'Select an Application Insights resource for your app.', id: `AppInsightsListStep/${context.subscriptionId}` };
+        const input: IAzureQuickPickItem<ApplicationInsightsComponent | undefined> = (await context.ui.showQuickPick(this.getQuickPicks(context), options));
+        context.appInsightsComponent = input.data;
 
         // as create new and skipForNow both have undefined as the data type, check the label
         if (input.label === skipForNowLabel) {
-            wizardContext.telemetry.properties.aiSkipForNow = 'true';
-            wizardContext.appInsightsSkip = true;
+            context.telemetry.properties.aiSkipForNow = 'true';
+            context.appInsightsSkip = true;
         } else {
-            wizardContext.telemetry.properties.newAI = String(!wizardContext.appInsightsComponent);
+            context.telemetry.properties.newAI = String(!context.appInsightsComponent);
         }
     }
 
-    public shouldPrompt(wizardContext: IAppServiceWizardContext): boolean {
-        return !wizardContext.appInsightsComponent;
+    public shouldPrompt(context: IAppServiceWizardContext): boolean {
+        return !context.appInsightsComponent;
     }
 
-    public async getSubWizard(wizardContext: IAppServiceWizardContext): Promise<IWizardOptions<IAppServiceWizardContext> | undefined> {
-        if (wizardContext.appInsightsComponent) {
-            wizardContext.valuesToMask.push(nonNullProp(wizardContext.appInsightsComponent, 'name'));
-        } else if (!wizardContext.appInsightsSkip) {
+    public async getSubWizard(context: IAppServiceWizardContext): Promise<IWizardOptions<IAppServiceWizardContext> | undefined> {
+        if (context.appInsightsComponent) {
+            context.valuesToMask.push(nonNullProp(context.appInsightsComponent, 'name'));
+        } else if (!context.appInsightsSkip) {
             const promptSteps: AzureWizardPromptStep<IAppServiceWizardContext>[] = [new AppInsightsNameStep()];
-            LocationListStep.addStep(wizardContext, promptSteps);
+            LocationListStep.addStep(context, promptSteps);
             return {
                 promptSteps: promptSteps,
                 executeSteps: [new AppInsightsCreateStep()]
@@ -64,18 +71,19 @@ export class AppInsightsListStep extends AzureWizardPromptStep<IAppServiceWizard
         return undefined;
     }
 
-    private async getQuickPicks(wizardContext: IAppServiceWizardContext): Promise<IAzureQuickPickItem<ApplicationInsightsComponent | undefined>[]> {
+    private async getQuickPicks(context: IAppServiceWizardContext): Promise<IAzureQuickPickItem<ApplicationInsightsComponent | undefined>[]> {
 
-        const picks: IAzureQuickPickItem<ApplicationInsightsComponent | undefined>[] = [{
+        const picks: IAzureQuickPickItem<ApplicationInsightsComponent | undefined>[] = !this._suppressCreate ? [{
             label: localize('newApplicationInsight', '$(plus) Create new Application Insights resource'),
             data: undefined
-        },
-        {
+        }] : [];
+
+        picks.push({
             label: localize('skipForNow', skipForNowLabel),
             data: undefined
-        }];
+        });
 
-        let components: ApplicationInsightsComponentListResult = await AppInsightsListStep.getAppInsightsComponents(wizardContext);
+        let components: ApplicationInsightsComponentListResult = await AppInsightsListStep.getAppInsightsComponents(context);
 
         // https://github.com/microsoft/vscode-azurefunctions/issues/1454
         if (!Array.isArray(components)) {
