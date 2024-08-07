@@ -176,6 +176,7 @@ export interface AzExtServiceClientCredentialsT2 {
  */
 export interface ISubscriptionContext {
     credentials: AzExtServiceClientCredentials;
+    createCredentialsForScopes: (scopes: string[]) => Promise<AzExtServiceClientCredentials>;
     subscriptionDisplayName: string;
     subscriptionId: string;
     subscriptionPath: string;
@@ -1293,7 +1294,7 @@ export declare abstract class AzureWizardPromptStep<T extends IActionContext> {
      * Can be used to optionally configure the wizard context before determining if prompting is required
      * This method will be called before `shouldPrompt`
      */
-    public configureBeforePrompt?(wizardContext: T): Promise<void>;
+    public configureBeforePrompt?(wizardContext: T): void | Promise<void>;
 
     /**
      * Return true if this step should prompt based on the current state of the wizardContext
