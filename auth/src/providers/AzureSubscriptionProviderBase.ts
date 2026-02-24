@@ -335,10 +335,13 @@ export abstract class AzureSubscriptionProviderBase implements AzureSubscription
      * @returns A {@link SubscriptionClient}, {@link TokenCredential}, and {@link AzureAuthentication} for the given account+tenant.
      */
     protected async getSubscriptionClient(tenant: Partial<TenantIdAndAccount>): Promise<{ client: SubscriptionClient, credential: TokenCredential, authentication: AzureAuthentication }> {
+        // Credential ignores requested scopes and always uses default scopes (managementEndpointUrl),
+        // matching the scope used during signIn(). This avoids a refresh token round-trip that can
+        // fail when MSAL has stale cache entries for a different scope.
         const credential: TokenCredential = {
-            getToken: async (scopes: string | string[], options?: GetTokenOptions) => {
+            getToken: async (_scopes: string | string[], options?: GetTokenOptions) => {
                 this.silenceRefreshEvents();
-                const session = await getSessionFromVSCode(scopes, options?.tenantId || tenant.tenantId, { createIfNone: false, silent: true, account: tenant.account });
+                const session = await getSessionFromVSCode(undefined, options?.tenantId || tenant.tenantId, { createIfNone: false, silent: true, account: tenant.account });
                 if (!session) {
                     throw new NotSignedInError();
                 }
